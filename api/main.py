@@ -11,7 +11,7 @@ def get_db():
     conn = psycopg2.connect(
         host="localhost",
         user="root",
-        password="xxxxxxx",
+        password="Soldierme@2003",
         database="heart_diseases_db"
     )
     return conn
