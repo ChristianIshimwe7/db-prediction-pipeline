@@ -1,51 +1,100 @@
 from fastapi import FastAPI, HTTPException
-import mysql.connector
 from pydantic import BaseModel
+from typing import Optional
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-app = FastAPI()
+app = FastAPI(title="Heart Disease Prediction API")
 
-# Database connection
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",          
-    password="*****************",
-    database="heart_diseases_db"
-)
+# DB Connection
+def get_db():
+    conn = psycopg2.connect(
+        host="localhost",
+        user="root",
+        password="xxxxxxx",
+        database="heart_diseases_db"
+    )
+    return conn
 
-cursor = db.cursor(dictionary=True)
-class Patient(BaseModel):
+# Pydantic Models
+class PatientIn(BaseModel):
     age: int
-    sex: str
+    sex: int
+    cp: int
+    trestbps: int
     chol: int
+    fbs: int
+    restecg: int
     thalach: int
-    target: int
+    exang: int
+    oldpeak: float
+    slope: int
+    ca: int
+    thal: int
 
-# CRUD endepoints for Patient records
-@app.post("/patients/")
-def create_patient(patient: Patient):
-    sql = "INSERT INTO patients (age, sex, chol, thalach, target) VALUES (%s, %s, %s, %s, %s)"
-    cursor.execute(sql, (patient.age, patient.sex, patient.chol, patient.thalach, patient.target))
-    db.commit()
-    return {"message": "Patient added successfully"} # Create operation
+class PatientOut(PatientIn):
+    patient_id: int
+    created_at: str
 
-@app.get("/patients/")
-def get_patients():
-    cursor.execute("SELECT * FROM patients")
-    return cursor.fetchall()  # Read operation
+# CREATE
+@app.post("/patients/", response_model=PatientOut)
+def create_patient(patient: PatientIn):
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.callproc('sp_insert_patient', [
+            patient.age, patient.sex, patient.cp, patient.trestbps,
+            patient.chol, patient.fbs, patient.restecg, patient.thalach,
+            patient.exang, patient.oldpeak, patient.slope, patient.ca, patient.thal
+        ])
+        result = cur.fetchone()
+        conn.commit()
+        return {**patient.dict(), "patient_id": result['patient_id'], "created_at": result['created_at']}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    finally:
+        cur.close()
+        conn.close()
 
+# READ (Latest)
+@app.get("/patients/latest")
+def get_latest_patient():
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT * FROM patients
+        ORDER BY created_at DESC LIMIT 1
+    """)
+    patient = cur.fetchone()
+    cur.close(); conn.close()
+    if not patient:
+        raise HTTPException(404, "No patients found")
+    return patient
 
-@app.put("/patients/{id}")
-def update_patient(id: int, patient: Patient):
-    sql = "UPDATE patients SET age=%s, sex=%s, chol=%s, thalach=%s, target=%s WHERE id=%s"
-    cursor.execute(sql, (patient.age, patient.sex, patient.chol, patient.thalach, patient.target, id))
-    db.commit()
-    return {"message": "Patient updated successfully"}  # Update operation
+# UPDATE
+@app.put("/patients/{patient_id}")
+def update_patient(patient_id: int, patient: PatientIn):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE patients SET age=%s, sex=%s, cp=%s, trestbps=%s, chol=%s,
+        fbs=%s, restecg=%s, thalach=%s, exang=%s, oldpeak=%s, slope=%s, ca=%s, thal=%s
+        WHERE patient_id=%s
+    """, (patient.age, patient.sex, patient.cp, patient.trestbps, patient.chol,
+          patient.fbs, patient.restecg, patient.thalach, patient.exang, patient.oldpeak,
+          patient.slope, patient.ca, patient.thal, patient_id))
+    conn.commit()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Patient not found")
+    return {"message": "Updated"}
 
-@app.delete("/patients/{id}")
-def delete_patient(id: int):
-    cursor.execute("DELETE FROM patients WHERE id=%s", (id,))
-    db.commit()
-    return {"message": "Patient deleted successfully"}  # Delete operation
-
-if __name__ == "__main__":
-    app.run(debug=True)
+# DELETE
+@app.delete("/patients/{patient_id}")
+def delete_patient(patient_id: int):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM patients WHERE patient_id=%s", (patient_id,))
+    conn.commit()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Patient not found")
+    return {"message": "Deleted"}
