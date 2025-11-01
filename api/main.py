@@ -8,7 +8,7 @@ app = FastAPI()
 db = mysql.connector.connect(
     host="localhost",
     user="root",          
-    password="****************",
+    password="*****************",
     database="heart_diseases_db"
 )
 
