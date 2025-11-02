@@ -1,22 +1,25 @@
+# main.py
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import mysql.connector
+from mysql.connector import Error
 
 app = FastAPI(title="Heart Disease Prediction API")
 
-# DB Connection
 def get_db():
-    conn = psycopg2.connect(
-        host="localhost",
-        user="root",
-        password="Soldierme@2003",
-        database="heart_diseases_db"
-    )
-    return conn
+    try:
+        conn = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="Ishichristian@1",
+            database="heart_disease_db"
+        )
+        print("MySQL Connected!")
+        return conn
+    except Error as e:
+        print(f"DB Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# Pydantic Models
 class PatientIn(BaseModel):
     age: int
     sex: int
@@ -36,65 +39,49 @@ class PatientOut(PatientIn):
     patient_id: int
     created_at: str
 
-# CREATE
 @app.post("/patients/", response_model=PatientOut)
 def create_patient(patient: PatientIn):
     conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor()
     try:
-        cur.callproc('sp_insert_patient', [
+        cur.callproc("sp_insert_patient", [
             patient.age, patient.sex, patient.cp, patient.trestbps,
             patient.chol, patient.fbs, patient.restecg, patient.thalach,
             patient.exang, patient.oldpeak, patient.slope, patient.ca, patient.thal
         ])
-        result = cur.fetchone()
         conn.commit()
-        return {**patient.dict(), "patient_id": result['patient_id'], "created_at": result['created_at']}
-    except Exception as e:
-        raise HTTPException(400, str(e))
+        cur.execute("SELECT LAST_INSERT_ID() AS patient_id, NOW() AS created_at")
+        result = cur.fetchone()
+        return {**patient.dict(), "patient_id": result[0], "created_at": result[1].strftime("%Y-%m-%d %H:%M:%S")}
     finally:
         cur.close()
         conn.close()
 
-# READ (Latest)
 @app.get("/patients/latest")
 def get_latest_patient():
     conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("""
-        SELECT * FROM patients
-        ORDER BY created_at DESC LIMIT 1
-    """)
-    patient = cur.fetchone()
-    cur.close(); conn.close()
-    if not patient:
-        raise HTTPException(404, "No patients found")
-    return patient
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT * FROM patients ORDER BY created_at DESC LIMIT 1")
+        patient = cur.fetchone()
+        if not patient:
+            raise HTTPException(404, "No patients found")
+        return patient
+    finally:
+        cur.close()
+        conn.close()
 
-# UPDATE
-@app.put("/patients/{patient_id}")
-def update_patient(patient_id: int, patient: PatientIn):
+@app.post("/predictions/")
+def log_prediction(log: dict):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("""
-        UPDATE patients SET age=%s, sex=%s, cp=%s, trestbps=%s, chol=%s,
-        fbs=%s, restecg=%s, thalach=%s, exang=%s, oldpeak=%s, slope=%s, ca=%s, thal=%s
-        WHERE patient_id=%s
-    """, (patient.age, patient.sex, patient.cp, patient.trestbps, patient.chol,
-          patient.fbs, patient.restecg, patient.thalach, patient.exang, patient.oldpeak,
-          patient.slope, patient.ca, patient.thal, patient_id))
-    conn.commit()
-    if cur.rowcount == 0:
-        raise HTTPException(404, "Patient not found")
-    return {"message": "Updated"}
-
-# DELETE
-@app.delete("/patients/{patient_id}")
-def delete_patient(patient_id: int):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM patients WHERE patient_id=%s", (patient_id,))
-    conn.commit()
-    if cur.rowcount == 0:
-        raise HTTPException(404, "Patient not found")
-    return {"message": "Deleted"}
+    try:
+        cur.execute("""
+            INSERT INTO predictions (patient_id, prediction, probability, model_version)
+            VALUES (%s, %s, %s, %s)
+        """, (log['patient_id'], log['prediction'], log['probability'], log['model_version']))
+        conn.commit()
+        return {"message": "Prediction logged"}
+    finally:
+        cur.close()
+        conn.close()
