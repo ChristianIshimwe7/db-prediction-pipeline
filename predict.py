@@ -15,7 +15,7 @@ SCALER_PATH = "scaler.pkl"
 FEATURES = ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg',
             'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal']
 
-# === 1. CREATE MODEL IF NOT EXISTS ===
+# === 1. CREATE MODEL===
 def create_model_if_missing():
     if not os.path.exists(MODEL_PATH) or not os.path.exists(SCALER_PATH):
         print("Model or scaler not found. Creating from Heart Disease UCI dataset...")
